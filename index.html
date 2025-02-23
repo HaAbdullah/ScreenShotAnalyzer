@@ -4,345 +4,234 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Screenshot Analyzer</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.21.2/babel.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.3.4/axios.min.js"></script>
-    <link
-      rel="stylesheet"
-      href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css"
-    />
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+        background: #f8f9fa;
+        margin: 0;
+        padding: 2rem;
+        min-height: 100vh;
+      }
+
+      .container {
+        max-width: 1000px;
+        margin: 0 auto;
+        background: white;
+        padding: 2rem;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+      }
+
+      .upload-section {
+        border: 2px dashed #e0e0e0;
+        border-radius: 8px;
+        padding: 2rem;
+        text-align: center;
+        margin-bottom: 2rem;
+        transition: border-color 0.2s;
+      }
+
+      input[type="file"] {
+        display: none;
+      }
+
+      .custom-upload {
+        background: #007bff;
+        color: white;
+        padding: 0.75rem 1.5rem;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background 0.2s;
+        display: inline-block;
+      }
+
+      .custom-upload:hover {
+        background: #0056b3;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 2rem;
+      }
+
+      th,
+      td {
+        padding: 12px;
+        text-align: left;
+        border-bottom: 1px solid #e0e0e0;
+      }
+
+      th {
+        background-color: #f8f9fa;
+        font-weight: 500;
+      }
+
+      .download-btn {
+        background: #28a745;
+        color: white;
+        padding: 0.75rem 1.5rem;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        float: right;
+        margin-top: 1rem;
+        transition: background 0.2s;
+      }
+
+      .download-btn:hover {
+        background: #218838;
+      }
+
+      .loading {
+        display: none;
+        margin: 1rem 0;
+        color: #6c757d;
+      }
+    </style>
   </head>
-  <body class="bg-gray-50">
-    <div id="root"></div>
+  <body>
+    <div class="container">
+      <h1>Screenshot Analyzer</h1>
+      <div class="upload-section">
+        <input type="file" id="fileInput" accept="image/*" />
+        <label for="fileInput" class="custom-upload"> Upload Screenshot </label>
+        <p style="margin-top: 1rem; color: #6c757d">(PNG, JPG supported)</p>
+      </div>
 
-    <script type="text/babel">
-      const App = () => {
-        const [selectedFile, setSelectedFile] = React.useState(null);
-        const [imagePreview, setImagePreview] = React.useState(null);
-        const [results, setResults] = React.useState([]);
-        const [loading, setLoading] = React.useState(false);
-        const [error, setError] = React.useState(null);
-        const fileInputRef = React.useRef(null);
-        const dropAreaRef = React.useRef(null);
+      <button class="download-btn" id="downloadBtn">Download CSV</button>
 
-        React.useEffect(() => {
-          const dropArea = dropAreaRef.current;
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Company</th>
+            <th>Role</th>
+            <th>Credentials</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+          <!-- Rows will be added dynamically -->
+        </tbody>
+      </table>
 
-          const preventDefaults = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-          };
+      <div class="loading" id="loading">Analyzing...</div>
+    </div>
 
-          const highlight = () => {
-            dropArea.classList.add("border-blue-500");
-            dropArea.classList.add("bg-blue-50");
-          };
+    <script>
+      const API_KEY =
+        "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";
+      const API_URL = "https://openrouter.ai/api/v1/chat/completions";
+      let entries = [];
 
-          const unhighlight = () => {
-            dropArea.classList.remove("border-blue-500");
-            dropArea.classList.remove("bg-blue-50");
-          };
+      document
+        .getElementById("fileInput")
+        .addEventListener("change", async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
 
-          const handleDrop = (e) => {
-            preventDefaults(e);
-            unhighlight();
-
-            const dt = e.dataTransfer;
-            const files = dt.files;
-
-            if (files && files.length) {
-              handleFiles(files);
-            }
-          };
-
-          dropArea.addEventListener("dragenter", highlight, false);
-          dropArea.addEventListener("dragover", highlight, false);
-          dropArea.addEventListener("dragleave", unhighlight, false);
-          dropArea.addEventListener("drop", handleDrop, false);
-
-          ["dragenter", "dragover", "dragleave", "drop"].forEach(
-            (eventName) => {
-              dropArea.addEventListener(eventName, preventDefaults, false);
-            }
-          );
-
-          return () => {
-            ["dragenter", "dragover", "dragleave", "drop"].forEach(
-              (eventName) => {
-                dropArea.removeEventListener(eventName, preventDefaults, false);
-              }
-            );
-
-            dropArea.removeEventListener("dragenter", highlight, false);
-            dropArea.removeEventListener("dragover", highlight, false);
-            dropArea.removeEventListener("dragleave", unhighlight, false);
-            dropArea.removeEventListener("drop", handleDrop, false);
-          };
-        }, []);
-
-        const handleFiles = (files) => {
-          if (files && files.length) {
-            const file = files[0];
-            if (file.type.match("image/jpeg") || file.type.match("image/png")) {
-              if (file.size <= 10 * 1024 * 1024) {
-                // 10MB limit
-                setSelectedFile(file);
-
-                const reader = new FileReader();
-                reader.onloadend = () => {
-                  setImagePreview(reader.result);
-                  analyzeImage(file);
-                };
-                reader.readAsDataURL(file);
-              } else {
-                setError("File size exceeds 10MB limit");
-              }
-            } else {
-              setError("Please upload a PNG or JPG file");
-            }
-          }
-        };
-
-        const handleFileChange = (e) => {
-          handleFiles(e.target.files);
-        };
-
-        const handleClickUpload = () => {
-          fileInputRef.current.click();
-        };
-
-        const analyzeImage = async (file) => {
-          setLoading(true);
-          setError(null);
+          const loading = document.getElementById("loading");
+          const tableBody = document.getElementById("tableBody");
 
           try {
+            loading.style.display = "block";
+
             // Convert image to base64
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onloadend = async () => {
-              const base64Image = reader.result.split(",")[1];
+            const base64 = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.readAsDataURL(file);
+              reader.onload = () => resolve(reader.result);
+              reader.onerror = (error) => reject(error);
+            });
 
-              // Replace with your actual API endpoint and key management
-              const response = await axios.post(
-                "https://api.openai.com/v1/chat/completions",
-                {
-                  model: "gpt-4-vision-preview",
-                  messages: [
-                    {
-                      role: "user",
-                      content: [
-                        {
-                          type: "text",
-                          text: "Analyze this screenshot and extract the following information if available: Name, Position (job title), Company, Credentials (degrees, certifications), and the current Date. If any information is not present in the image, respond with 'Not detected'.",
-                        },
-                        {
-                          type: "image_url",
-                          image_url: {
-                            url: `data:image/jpeg;base64,${base64Image}`,
-                          },
-                        },
-                      ],
-                    },
-                  ],
-                  max_tokens: 1000,
-                },
-                {
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer YOUR_OPENAI_API_KEY`,
+            // Prepare API request
+            const response = await fetch(API_URL, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${API_KEY}`,
+              },
+              body: JSON.stringify({
+                model: "qwen/qwen-vl-plus:free",
+                messages: [
+                  {
+                    role: "user",
+                    content: [
+                      {
+                        type: "text",
+                        text: "Extract the full name, company name, job role, and professional credentials from this image. Format exactly as:\nName: [...]\nCompany: [...]\nRole: [...]\nCredentials: [...]",
+                      },
+                      {
+                        type: "image_url",
+                        image_url: { url: base64 },
+                      },
+                    ],
                   },
-                }
-              );
+                ],
+              }),
+            });
 
-              // Simple parsing - in a real app, you'd want more robust parsing
-              const content = response.data.choices[0].message.content;
+            const data = await response.json();
+            const analysis = data.choices[0].message.content;
 
-              // Extract information using regex
-              const name = content.match(/Name: (.*?)(?:\n|$)/)
-                ? content.match(/Name: (.*?)(?:\n|$)/)[1].trim()
-                : "Not detected";
-              const position = content.match(/Position: (.*?)(?:\n|$)/)
-                ? content.match(/Position: (.*?)(?:\n|$)/)[1].trim()
-                : "Not detected";
-              const company = content.match(/Company: (.*?)(?:\n|$)/)
-                ? content.match(/Company: (.*?)(?:\n|$)/)[1].trim()
-                : "Not detected";
-              const credentials = content.match(/Credentials: (.*?)(?:\n|$)/)
-                ? content.match(/Credentials: (.*?)(?:\n|$)/)[1].trim()
-                : "None";
+            // Parse the response
+            const result = analysis.split("\n").reduce((acc, line) => {
+              const [key, value] = line.split(": ").map((s) => s.trim());
+              acc[key.toLowerCase()] = value;
+              return acc;
+            }, {});
 
-              // Get current date
-              const today = new Date();
-              const formattedDate = `${
-                today.getMonth() + 1
-              }/${today.getDate()}/${today.getFullYear()}`;
+            // Add to entries
+            entries.push({
+              name: result.name || "N/A",
+              company: result.company || "N/A",
+              role: result.role || "N/A",
+              credentials: result.credentials || "N/A",
+            });
 
-              setResults([
-                ...results,
-                {
-                  id: Date.now(),
-                  image: imagePreview,
-                  name: name === "Not detected" ? "Stanley" : name, // For demo purposes
-                  position: position === "Not detected" ? "CEO" : position, // For demo purposes
-                  company: company,
-                  credentials: credentials,
-                  date: formattedDate,
-                },
-              ]);
-
-              setLoading(false);
-              setSelectedFile(null);
-              setImagePreview(null);
-            };
-          } catch (err) {
-            console.error("Error analyzing image:", err);
-            setError("Failed to analyze screenshot. Please try again.");
-            setLoading(false);
-          }
-        };
-
-        return (
-          <div className="max-w-6xl mx-auto p-4">
-            <div className="text-center mb-6">
-              <h1 className="text-4xl font-bold mb-2">Screenshot Analyzer</h1>
-              <p className="text-gray-600">
-                Upload your screenshots and let our AI extract the important
-                information automatically.
-              </p>
-            </div>
-
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-8">
-              <div
-                ref={dropAreaRef}
-                onClick={handleClickUpload}
-                className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer transition duration-200"
-              >
-                <div className="flex flex-col items-center">
-                  <svg
-                    className="w-12 h-12 text-gray-400 mb-3"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3-3m0 0l3 3m-3-3v12"
-                    ></path>
-                  </svg>
-                  <p className="mb-2 text-sm text-gray-500">
-                    <span className="font-semibold">
-                      Drag & drop your screenshot here, or click to select
-                    </span>
-                  </p>
-                  <p className="text-xs text-gray-500">PNG, JPG up to 10MB</p>
-                </div>
-
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/jpeg, image/png"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
-              </div>
-
-              {loading && (
-                <div className="mt-4 text-center">
-                  <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-blue-600 border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]"></div>
-                  <p className="mt-2 text-gray-600">
-                    Analyzing your screenshot...
-                  </p>
-                </div>
-              )}
-
-              {error && (
-                <div className="mt-4 text-center text-red-600">{error}</div>
-              )}
-            </div>
-
-            {results.length > 0 && (
-              <div className="overflow-x-auto bg-white rounded-lg shadow-sm border border-gray-200">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
+            // Update table
+            tableBody.innerHTML = entries
+              .map(
+                (entry) => `
                     <tr>
-                      <th
-                        scope="col"
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                      >
-                        Screenshot
-                      </th>
-                      <th
-                        scope="col"
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                      >
-                        Name
-                      </th>
-                      <th
-                        scope="col"
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                      >
-                        Position
-                      </th>
-                      <th
-                        scope="col"
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                      >
-                        Company
-                      </th>
-                      <th
-                        scope="col"
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                      >
-                        Credentials
-                      </th>
-                      <th
-                        scope="col"
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                      >
-                        Date
-                      </th>
+                        <td>${entry.name}</td>
+                        <td>${entry.company}</td>
+                        <td>${entry.role}</td>
+                        <td>${entry.credentials}</td>
                     </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {results.map((result) => (
-                      <tr key={result.id}>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <img
-                            src={result.image}
-                            alt="Screenshot"
-                            className="h-16 w-auto rounded border border-gray-200"
-                          />
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {result.name}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {result.position}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {result.company}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {result.credentials}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {result.date}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        );
-      };
+                `
+              )
+              .join("");
+          } catch (error) {
+            alert(`Error: ${error.message}`);
+          } finally {
+            loading.style.display = "none";
+          }
+        });
 
-      ReactDOM.render(<App />, document.getElementById("root"));
+      // CSV Download handler
+      document.getElementById("downloadBtn").addEventListener("click", () => {
+        const csvContent = [
+          ["Name", "Company", "Role", "Credentials"].join(","),
+          ...entries.map((entry) =>
+            [
+              `"${entry.name}"`,
+              `"${entry.company}"`,
+              `"${entry.role}"`,
+              `"${entry.credentials}"`,
+            ].join(",")
+          ),
+        ].join("\n");
+
+        const blob = new Blob([csvContent], { type: "text/csv" });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "credentials_export.csv";
+        a.click();
+        window.URL.revokeObjectURL(url);
+      });
     </script>
   </body>
 </html>
