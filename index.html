@@ -68,20 +68,36 @@
         font-weight: 500;
       }
 
-      .download-btn {
-        background: #28a745;
-        color: white;
+      .button-group {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 1rem;
+      }
+
+      .download-btn,
+      .clear-btn {
         padding: 0.75rem 1.5rem;
         border: none;
         border-radius: 6px;
         cursor: pointer;
-        float: right;
-        margin-top: 1rem;
         transition: background 0.2s;
+        color: white;
+      }
+
+      .download-btn {
+        background: #28a745;
       }
 
       .download-btn:hover {
         background: #218838;
+      }
+
+      .clear-btn {
+        background: #dc3545;
+      }
+
+      .clear-btn:hover {
+        background: #c82333;
       }
 
       .loading {
@@ -95,12 +111,16 @@
     <div class="container">
       <h1>Screenshot Analyzer</h1>
       <div class="upload-section">
-        <input type="file" id="fileInput" accept="image/*" />
+        <input type="file" id="fileInput" accept="image/*" multiple />
+
         <label for="fileInput" class="custom-upload"> Upload Screenshot </label>
         <p style="margin-top: 1rem; color: #6c757d">(PNG, JPG supported)</p>
       </div>
 
-      <button class="download-btn" id="downloadBtn">Download CSV</button>
+      <div class="button-group">
+        <button class="clear-btn" id="clearBtn">Clear All</button>
+        <button class="download-btn" id="downloadBtn">Download CSV</button>
+      </div>
 
       <table>
         <thead>
@@ -121,117 +141,262 @@
 
     <script>
       const API_KEY =
-        "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";
+        "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";
       const API_URL = "https://openrouter.ai/api/v1/chat/completions";
       let entries = [];
+      const DB_NAME = "screenshotAnalyzerDB";
+      const STORE_NAME = "entries";
 
-      document
-        .getElementById("fileInput")
-        .addEventListener("change", async (e) => {
-          const file = e.target.files[0];
-          if (!file) return;
+      // Initialize IndexedDB
+      function initDB() {
+        return new Promise((resolve, reject) => {
+          if (!window.indexedDB) {
+            console.log(
+              "Your browser doesn't support IndexedDB. Using local storage instead."
+            );
+            resolve(null);
+            return;
+          }
 
-          const loading = document.getElementById("loading");
-          const tableBody = document.getElementById("tableBody");
+          const request = indexedDB.open(DB_NAME, 1);
 
-          try {
-            loading.style.display = "block";
+          request.onerror = (event) => {
+            console.error("IndexedDB error:", event.target.error);
+            resolve(null);
+          };
 
-            // Convert image to base64
-            const base64 = await new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.readAsDataURL(file);
-              reader.onload = () => resolve(reader.result);
-              reader.onerror = (error) => reject(error);
-            });
+          request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+              db.createObjectStore(STORE_NAME, {
+                keyPath: "id",
+                autoIncrement: true,
+              });
+            }
+          };
 
-            // Prepare API request
-            const response = await fetch(API_URL, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${API_KEY}`,
-              },
-              body: JSON.stringify({
-                model: "qwen/qwen-vl-plus:free",
-                messages: [
-                  {
-                    role: "user",
-                    content: [
-                      {
-                        type: "text",
-                        text: "Extract the full name, company name, job role, and professional credentials from this image. Format exactly as:\nName: [...]\nCompany: [...]\nRole: [...]\nCredentials: [...]",
-                      },
-                      {
-                        type: "image_url",
-                        image_url: { url: base64 },
-                      },
-                    ],
-                  },
-                ],
-              }),
-            });
+          request.onsuccess = (event) => {
+            resolve(event.target.result);
+          };
+        });
+      }
 
-            const data = await response.json();
-            const analysis = data.choices[0].message.content;
+      // Save entries to storage
+      async function saveEntries(db) {
+        if (db) {
+          // Use IndexedDB
+          const transaction = db.transaction([STORE_NAME], "readwrite");
+          const store = transaction.objectStore(STORE_NAME);
 
-            // Parse the response
-            const result = analysis.split("\n").reduce((acc, line) => {
-              const [key, value] = line.split(": ").map((s) => s.trim());
-              acc[key.toLowerCase()] = value;
+          // Clear existing entries
+          store.clear();
+
+          // Add all current entries
+          entries.forEach((entry) => {
+            store.add(entry);
+          });
+        } else {
+          // Use localStorage as fallback
+          localStorage.setItem(
+            "screenshotAnalyzerEntries",
+            JSON.stringify(entries)
+          );
+        }
+      }
+
+      // Load entries from storage
+      async function loadEntries(db) {
+        return new Promise((resolve, reject) => {
+          if (db) {
+            // Use IndexedDB
+            const transaction = db.transaction([STORE_NAME], "readonly");
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.getAll();
+
+            request.onsuccess = () => {
+              resolve(request.result || []);
+            };
+
+            request.onerror = (event) => {
+              console.error("Error loading entries:", event.target.error);
+              resolve([]);
+            };
+          } else {
+            // Use localStorage as fallback
+            const savedEntries = localStorage.getItem(
+              "screenshotAnalyzerEntries"
+            );
+            resolve(savedEntries ? JSON.parse(savedEntries) : []);
+          }
+        });
+      }
+
+      // Parse the AI response for multiple people
+      function parseMultiplePersons(text) {
+        // Split by double newlines to separate different people
+        const personBlocks = text.split(/\n\s*\n/);
+
+        return personBlocks
+          .map((block) => {
+            // Parse individual person data
+            const result = block.split("\n").reduce((acc, line) => {
+              if (line.includes(": ")) {
+                const [key, value] = line.split(": ").map((s) => s.trim());
+                acc[key.toLowerCase()] = value;
+              }
               return acc;
             }, {});
 
-            // Add to entries
-            entries.push({
+            // Add timestamp for sorting
+            return {
               name: result.name || "N/A",
               company: result.company || "N/A",
               role: result.role || "N/A",
               credentials: result.credentials || "N/A",
-            });
+              timestamp: new Date().toISOString(),
+            };
+          })
+          .filter(
+            (person) => person.name !== "N/A" || person.company !== "N/A"
+          );
+      }
 
-            // Update table
-            tableBody.innerHTML = entries
-              .map(
-                (entry) => `
-                    <tr>
-                        <td>${entry.name}</td>
-                        <td>${entry.company}</td>
-                        <td>${entry.role}</td>
-                        <td>${entry.credentials}</td>
-                    </tr>
-                `
-              )
-              .join("");
-          } catch (error) {
-            alert(`Error: ${error.message}`);
-          } finally {
-            loading.style.display = "none";
-          }
-        });
+      // Update the table with entries
+      function updateTable() {
+        const tableBody = document.getElementById("tableBody");
+        tableBody.innerHTML = entries
+          .map(
+            (entry) => `
+              <tr>
+                <td>${entry.name}</td>
+                <td>${entry.company}</td>
+                <td>${entry.role}</td>
+                <td>${entry.credentials}</td>
+              </tr>
+            `
+          )
+          .join("");
+      }
 
-      // CSV Download handler
-      document.getElementById("downloadBtn").addEventListener("click", () => {
+      // Download entries as CSV
+      function downloadCSV() {
+        const headers = ["Name", "Company", "Role", "Credentials"];
         const csvContent = [
-          ["Name", "Company", "Role", "Credentials"].join(","),
+          headers.join(","),
           ...entries.map((entry) =>
             [
-              `"${entry.name}"`,
-              `"${entry.company}"`,
-              `"${entry.role}"`,
-              `"${entry.credentials}"`,
+              `"${entry.name.replace(/"/g, '""')}"`,
+              `"${entry.company.replace(/"/g, '""')}"`,
+              `"${entry.role.replace(/"/g, '""')}"`,
+              `"${entry.credentials.replace(/"/g, '""')}"`,
             ].join(",")
           ),
         ].join("\n");
 
-        const blob = new Blob([csvContent], { type: "text/csv" });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "credentials_export.csv";
-        a.click();
-        window.URL.revokeObjectURL(url);
-      });
+        const blob = new Blob([csvContent], {
+          type: "text/csv;charset=utf-8;",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute(
+          "download",
+          `screenshot-analysis-${new Date().toISOString().slice(0, 10)}.csv`
+        );
+        link.style.visibility = "hidden";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      // Initialize the application
+      async function init() {
+        const db = await initDB();
+        entries = await loadEntries(db);
+        updateTable();
+
+        document
+          .getElementById("downloadBtn")
+          .addEventListener("click", downloadCSV);
+
+        document
+          .getElementById("clearBtn")
+          .addEventListener("click", async () => {
+            entries = [];
+            updateTable();
+            await saveEntries(db);
+          });
+
+        document
+          .getElementById("fileInput")
+          .addEventListener("change", async (e) => {
+            const files = e.target.files;
+            if (!files.length) return;
+
+            const loading = document.getElementById("loading");
+            loading.style.display = "block";
+
+            try {
+              for (const file of files) {
+                // Convert image to base64
+                const base64 = await new Promise((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.readAsDataURL(file);
+                  reader.onload = () => resolve(reader.result);
+                  reader.onerror = (error) => reject(error);
+                });
+
+                // Prepare API request
+                const response = await fetch(API_URL, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${API_KEY}`,
+                  },
+                  body: JSON.stringify({
+                    model: "qwen/qwen-vl-plus:free",
+                    messages: [
+                      {
+                        role: "user",
+                        content: [
+                          {
+                            type: "text",
+                            text: "Extract the full name, company name, job role, and professional credentials for ALL people visible in this image. If there are multiple people, list each person separately with a blank line between them. Format exactly as:\nName: [...]\nCompany: [...]\nRole: [...]\nCredentials: [...]\n\nName: [...]\nCompany: [...]\nRole: [...]\nCredentials: [...]\n\nand so on for each person.",
+                          },
+                          {
+                            type: "image_url",
+                            image_url: { url: base64 },
+                          },
+                        ],
+                      },
+                    ],
+                  }),
+                });
+
+                const data = await response.json();
+                const analysis = data.choices[0].message.content;
+
+                // Parse multiple people from the response
+                const newEntries = parseMultiplePersons(analysis);
+
+                // Add to existing entries
+                entries = [...entries, ...newEntries];
+              }
+
+              // Update table and save to storage
+              updateTable();
+              await saveEntries(db);
+            } catch (error) {
+              alert(`Error: ${error.message}`);
+              console.error(error);
+            } finally {
+              loading.style.display = "none";
+            }
+          });
+      }
+
+      // Start the app when page loads
+      window.addEventListener("DOMContentLoaded", init);
     </script>
   </body>
 </html>
